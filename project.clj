@@ -60,9 +60,12 @@
                     :injections [(require 'spyscope.core)]}
 
              :testutils {:source-paths ^:replace ["test/clj"]
-                         :java-source-paths ^:replace ["test/java"]}
+                         :java-source-paths ^:replace ["test/java"]
+                         :aot ^:replace []}
              :uberjar {:aot [puppetlabs.trapperkeeper.main]
                        :classifiers ^:replace []}}
+
+  :aot [puppetlabs.trapperkeeper.services.webserver.jetty9-middleware]
 
   :main puppetlabs.trapperkeeper.main
   )

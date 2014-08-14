@@ -4,12 +4,14 @@
 
     [puppetlabs.trapperkeeper.services.webserver.jetty9-config :as config]
     [puppetlabs.trapperkeeper.services.webserver.jetty9-core :as core]
+    [puppetlabs.trapperkeeper.services.webserver.jetty9-middleware :as mw]
     [puppetlabs.trapperkeeper.core :refer [defservice]]
     [schema.core :as schema]))
 
 ;; TODO: this should probably be moved to a separate jar that can be used as
 ;; a dependency for all webserver service implementations
 (defprotocol WebserverService
+  (add-middleware [this middleware] [this middleware options])
   (add-context-handler [this base-path context-path] [this base-path context-path options])
   (add-ring-handler [this handler path] [this handler path options])
   (add-servlet-handler [this servlet path] [this servlet path options])
@@ -46,6 +48,12 @@
           (if-let [server (key (:jetty9-servers context))]
             (core/shutdown server)))
         context)
+
+  (add-middleware [this middleware]
+                  (core/add-middleware! (service-context this) middleware {}))
+
+  (add-middleware [this middleware options]
+                  (core/add-middleware! (service-context this) middleware options))
 
   (add-context-handler [this base-path context-path]
                        (core/add-context-handler! (service-context this) base-path context-path {}))

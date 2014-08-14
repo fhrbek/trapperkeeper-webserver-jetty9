@@ -28,6 +28,7 @@
             [clojure.tools.logging :as log]
             [puppetlabs.kitchensink.core :as ks]
             [puppetlabs.trapperkeeper.services.webserver.jetty9-config :as config]
+            [puppetlabs.trapperkeeper.services.webserver.jetty9-middleware :as mw]
             [schema.core :as schema]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -76,9 +77,10 @@
     (schema/optional-key :request-buffer-size) schema/Int))
 
 (def ServerContext
-  {:state     Atom
-   :handlers  ContextHandlerCollection
-   :server    (schema/maybe Server)})
+  {:state       Atom
+   :mw-handlers Atom
+   :handlers    ContextHandlerCollection
+   :server      (schema/maybe Server)})
 
 (def ContextEndpoint
   {:type                                    (schema/eq :context)
@@ -338,6 +340,7 @@
   []
   (let [^ContextHandlerCollection chc (ContextHandlerCollection.)]
     {:handlers chc
+     :mw-handlers (atom nil)
      :state (atom {:endpoints #{}})
      :server nil}))
 
@@ -402,9 +405,22 @@
                                     webserver-context
                                     options))
           ^Server s             (create-server webserver-context config)
-          ^HandlerCollection hc (HandlerCollection.)]
-    (.setHandlers hc (into-array Handler [(:handlers webserver-context)]))
-    (.setHandler s (gzip-handler hc))
+          ^HandlerCollection hc (HandlerCollection.)
+          handlers              (:handlers webserver-context)
+          mw-handlers           (:mw-handlers webserver-context)]
+
+    (.setHandlers hc (into-array Handler [handlers]))
+
+    (let [top-handler (if-let [mw-handlers @mw-handlers]
+                        (do
+                          (loop [mwh mw-handlers]
+                            (if-let [wrapped (.getHandler mwh)]
+                              (recur wrapped)
+                              (.setHandler mwh hc)))
+                          mw-handlers)
+                        hc)]
+      (.setHandler s (gzip-handler top-handler)))
+
     (assoc webserver-context :server s)))
 
 (schema/defn ^:always-validate start-webserver! :- ServerContext
@@ -423,6 +439,15 @@
         (shutdown webserver-context)
         (throw e)))
     webserver-context))
+
+(schema/defn ^:always-validate
+  add-middleware :- mw/WebserverServiceMiddleware
+  "Add a middleware (insert a handler into a stack of middleware handlers)"
+  [webserver-context :- ServerContext
+   middleware :- mw/WebserverServiceMiddleware]
+   (let [handler (puppetlabs.trapperkeeper.services.webserver.jetty9-middleware.MiddleWare. middleware)]
+     (swap! (:mw-handlers webserver-context) (fn [current] (.setHandler handler current) handler)))
+  middleware)
 
 (schema/defn ^:always-validate
   add-context-handler :- ContextHandler
@@ -650,6 +675,12 @@
     (cond
       (nil? old-config) (start-server-single-default context config)
       (nil? new-config) (start-server-multiple context config))))
+
+(schema/defn ^:always-validate add-middleware!
+             [context middleware options :- ServerIDOption]
+             (let [server-id (:server-id options)
+                   s         (get-server-context context server-id)]
+                  (add-middleware s middleware)))
 
 (schema/defn ^:always-validate add-context-handler!
   [context base-path context-path options :- ContextHandlerOptions]
